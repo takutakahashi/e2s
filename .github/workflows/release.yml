@@ -1,0 +1,86 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.21'
+    
+    - name: Cache Go modules
+      uses: actions/cache@v3
+      with:
+        path: ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+    
+    - name: Download dependencies
+      run: go mod download
+    
+    - name: Run tests
+      run: go test -v ./...
+    
+    - name: Set up environment
+      run: |
+        echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+        echo "RELEASE_NOTES<<EOF" >> $GITHUB_ENV
+        echo "Release ${{ github.ref_name }}" >> $GITHUB_ENV
+        echo "" >> $GITHUB_ENV
+        echo "## Changes" >> $GITHUB_ENV
+        git log --pretty=format:"- %s" $(git describe --tags --abbrev=0 HEAD~1)..HEAD >> $GITHUB_ENV || echo "- Initial release" >> $GITHUB_ENV
+        echo "EOF" >> $GITHUB_ENV
+    
+    - name: Build binaries
+      run: |
+        mkdir -p build
+        
+        # Linux AMD64
+        GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o build/e2s-linux-amd64 .
+        
+        # Linux ARM64
+        GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o build/e2s-linux-arm64 .
+        
+        # macOS AMD64
+        GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o build/e2s-darwin-amd64 .
+        
+        # macOS ARM64
+        GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o build/e2s-darwin-arm64 .
+        
+        # Windows AMD64
+        GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o build/e2s-windows-amd64.exe .
+        
+        # Create checksums
+        cd build
+        sha256sum * > checksums.txt
+        cd ..
+    
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        body: ${{ env.RELEASE_NOTES }}
+        files: |
+          build/e2s-linux-amd64
+          build/e2s-linux-arm64
+          build/e2s-darwin-amd64
+          build/e2s-darwin-arm64
+          build/e2s-windows-amd64.exe
+          build/checksums.txt
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
